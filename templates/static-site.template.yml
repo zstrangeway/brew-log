@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Stack for Static Sites hosted in S3
+
+###############################################################################
+Parameters:
+###############################################################################
+
+  HostedZone:
+    Description: Hosted Zone Name
+    Type: String
+  DomainName:
+    Description: Domain Name
+    Type: String
+  RootBucketName:
+    Description: Root S3 Bucket Name
+    Type: String
+  LogBucketName:
+    Description: Log S3 Bucket Name
+    Type: String
+  Environment:
+    Description: Environment that is utilizing the resources
+    Type: String
+  Service:
+    Description: Service that is utilizing the resources
+    Type: String
+
+###############################################################################
+Resources:
+###############################################################################
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Ref Service
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !Ref DomainName
+        CacheBehaviors: 
+          - PathPattern: "index.html"
+            Compress: true
+            DefaultTTL: 1
+            MinTTL: 1
+            MaxTTL: 1
+            ForwardedValues:
+              QueryString: false
+            TargetOriginId: the-s3-bucket
+            ViewerProtocolPolicy: redirect-to-https
+        DefaultCacheBehavior:
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+          TargetOriginId: the-s3-bucket
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /404.html
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /404.html
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - DomainName: !Join ['', [!Ref RootBucket, '.s3.amazonaws.com']]
+            Id: the-s3-bucket
+            S3OriginConfig:
+              OriginAccessIdentity:
+                !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
+        PriceClass: 'PriceClass_All'
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          MinimumProtocolVersion: TLSv1
+          SslSupportMethod: sni-only
+      Tags:
+        - Key: Domain
+          Value: !Ref DomainName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Ref Service
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'CloudFront OAI for ${DomainName}'
+
+  RootBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref RootBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref LogBucket
+        LogFilePrefix: 'cdn/'
+      Tags:
+        - Key: Domain
+          Value: !Ref DomainName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Ref Service
+
+  LogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      AccessControl: LogDeliveryWrite
+      BucketName: !Ref LogBucketName
+      Tags:
+        - Key: Domain
+          Value: !Ref DomainName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: !Ref Service
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RootBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Join ['', ['arn:aws:s3:::', !Ref RootBucket, '/*']]
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  Route53RecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneName: !Sub '${HostedZone}.'
+      RecordSets:
+      - Name: !Ref DomainName
+        Type: A
+        AliasTarget:
+          DNSName: !GetAtt CloudFrontDistribution.DomainName
+          EvaluateTargetHealth: false
+          HostedZoneId: Z2FDTNDATAQYW2 # ID for CloudFront
+      - Name: !Sub 'www.${DomainName}'
+        Type: A
+        AliasTarget:
+          DNSName: !GetAtt CloudFrontDistribution.DomainName
+          EvaluateTargetHealth: false
+          HostedZoneId: Z2FDTNDATAQYW2 # ID for CloudFront
+
+###############################################################################
+Outputs:
+###############################################################################
+
+  RootBucketName:
+    Value: !Ref 'RootBucket'
+    Description: Name of the S3 bucket that hosts the static site.
+  LogBucketName:
+    Value: !Ref 'LogBucket'
+    Description: Name of the S3 bucket that stores the logs.

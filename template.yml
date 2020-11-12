@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Root stack for Portfolio Infrastructure
+
+###############################################################################
+Parameters:
+###############################################################################
+
+  Environment:
+    Description: Enter deployment environment (dev, prod)
+    Type: String
+    AllowedValues: 
+      - prod
+      - dev
+  HostedZone:
+    Description: Route53 hosted zone
+    Type: String
+  FrontendDomainName:
+    Description: Domain of frontend web app
+    Type: String
+  FrontendRootBucketName:
+    Description: S3 bucket for frontend web app
+    Type: String
+  FrontendLogBucketName:
+    Description: S3 bucket for frontend web app logs
+    Type: String
+
+###############################################################################
+Resources:
+###############################################################################
+
+# Frontend
+###############################################################################
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        HostedZone: !Ref HostedZone
+        DomainName: !Ref FrontendDomainName
+        RootBucketName: !Ref FrontendRootBucketName
+        LogBucketName: !Ref FrontendLogBucketName
+        Environment: !Ref Environment
+        Service: Frontend
+      TemplateURL: templates/static-site.template.yml
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Service
+          Value: Frontend
+
+###############################################################################
+Outputs:
+###############################################################################
+
+  FrontendUrl:
+    Value: !Ref FrontendDomainName
+    Description: Url for the web app.
+  FrontendRootBucketName:
+    Value: !GetAtt FrontendStack.Outputs.RootBucketName
+    Description: Name of the S3 bucket that hosts the static site for the web app.
+  FrontendLogBucketName:
+    Value: !GetAtt FrontendStack.Outputs.LogBucketName
+    Description: Name of the S3 bucket that stores the logs for the web app.
